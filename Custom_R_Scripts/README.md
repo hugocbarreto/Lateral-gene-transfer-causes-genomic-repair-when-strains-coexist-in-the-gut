@@ -8,7 +8,7 @@ This custom script performs the following steps:
 
 a) removal of the predicted mutations already present in the ancestral strains ran with the same parameters as the sequenced populations; 
 
-b) calculation of the e14 excision frequency, in which we first perform the ratio of the e14 median coverage and the coverage in the left and right flank. The final frequency is obtained as the average of both ratios;
+b) calculation of the e14 excision frequency, in which we first calculate the ratios between the e14 median coverage and the coverage in the left and right flank. The final frequency is obtained as the average of both ratios;
 
 c) BLAST all the reads of each predicted mutations against the recipient and donor reference genomes (if reads that 100% match with the incorrect reference genome are at a frequency above 0.01, the predicted mutation is removed from the list and considered as a potential HGT event); 
 
