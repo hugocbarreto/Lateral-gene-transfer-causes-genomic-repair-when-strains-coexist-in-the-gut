@@ -3,3 +3,7 @@ Here you can find the annotated genomes of the _Escherichia coli_ strains used a
 - IGC_RcoliRes_1.1 (CP054662.1_IS_annotated.gbk)
 
 For IGC_RcoliRes_1.1, Insertion sequences (IS) were detected using ISEScan (version 1.7.2.3), considering only complete IS.  
+
+You can also find the genomes annotated with PROKKA of the plasmids that are present in the Donor strain:
+- CP054663.gbk (108557 bp)
+- CP054664.gbk (68935 bp)
