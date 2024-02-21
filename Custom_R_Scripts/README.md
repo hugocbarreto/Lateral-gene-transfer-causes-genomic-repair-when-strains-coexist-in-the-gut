@@ -14,6 +14,6 @@ c) BLAST all the reads of each predicted mutations against the recipient and don
 
 d) removal of predicted mutations if they are detected in the reads of the ancestral clones at a frequency higher than 0.015 and with more than 3 reads.
 
-- Checking_for_deletions.Rmd
+- Checking_for_deletions_Donor.Rmd
 
 This custom script calculates the frequency of the deletions that were observed in populations from the Donor strain and which were not detected by Breseq.
