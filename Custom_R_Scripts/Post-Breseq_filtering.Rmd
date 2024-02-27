@@ -1,0 +1,1405 @@
+---
+title: "Post-breseq filtering of Invader and Resident population sequencing"
+author: "Hugo Barreto"
+date: "2022-11-08"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(rstudioapi)
+current_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(current_path ))
+print( getwd() )
+```
+
+## 1st Step: Load all the packages needed
+
+We will need the load the folowing packages: dplyr,stringr,deepSNV,tidyverse,XML,RCurl,rlist,janitor,reactablefmtr,viridis, writexl, ggbeeswarm
+
+```{r loading library, message=FALSE, warning=FALSE}
+# This loads all packages necessary for running the script
+
+if(!require(BiocManager)){
+  install.packages('BiocManager')
+  library(BiocManager)
+}
+
+if(!require(deepSNV)){
+  BiocManager::install("deepSNV")
+  library(deepSNV)
+}
+
+if(!require(gmoviz)){
+  BiocManager::install("gmoviz")
+  library(gmoviz)
+}
+
+if(!require(rBLAST)){
+  install.packages('rBLAST', repos = 'https://mhahsler.r-universe.dev')
+  library(rBLAST)
+}
+  
+if(!require(librarian)){
+    install.packages("librarian")
+    library(librarian)
+}
+
+librarian::shelf(dplyr, stringr, deepSNV, tidyverse, XML, RCurl, rlist, janitor, kcuilla / reactablefmtr, viridis, writexl, ggbeeswarm, Rsamtools, rBLAST, gmoviz, readxl, cowplot)
+
+
+
+if("plyr" %in% (.packages())){ # Due to conflicts with plyr, this code deactivates this package
+  detach("package:plyr", unload=TRUE) 
+}
+```
+
+## 2nd Step: Import tables and prepare data
+
+### Important: We need the output files from the Breseq analysis of both Ancestral and sequenced populations
+
+To have the input files, you just need to copy from the breseq output the index.html file. Then, you modify the name of the file as following:
+
+For Ancestral ---\> 'name of your ancestral'_Anc_'strain initial'.html ---\> EXAMPLE: sfGFP_Anc_R.html
+
+For Populations ---\> 'name of your population'**d'**day'\_pop_'strain initial'.html ---\> EXAMPLE: OB1d154_pop_R.html
+
+An example is given below and you can also have a look at the input files. This section creates a mutation file for all populations and all ancestrals.
+
+```{r importing tables and preparing data, message=FALSE, warning=FALSE}
+
+#Import file with Ancestral mutations when run in polymorphism mode in Breseq
+
+list_of_ancestrals_R <- dir(path = "Ancestral_files/",pattern = "*Anc_R.html",full.names = T) #Creates a list of the html files corresponding to the Ancestral samples of Resident
+list_of_ancestrals_I <- dir(path = "Ancestral_files/",pattern = "*Anc_I.html",full.names = T) #Creates a list of the html files corresponding to the Ancestral samples of Resident
+
+list_of_populations_R <- dir(path = "input/",pattern = "*pop_R.html",full.names = T) # creates the list of all the sequenced Resident population files in the directory
+list_of_populations_I <- dir(path = "input/",pattern = "*pop_I.html",full.names = T) # creates the list of all the sequenced Invader population files in the directory
+
+if(length(list_of_populations_R) > 0){Ancestral_R <- data.frame()} #Creates an empty data frame for the loop
+if(length(list_of_populations_I) > 0){Ancestral_I <- data.frame()} #Creates an empty data frame for the loop
+
+if(length(list_of_populations_R) > 0){
+  for (p in list_of_ancestrals_R) { #loop to obtain the Ancestral Resident mutations/sequencing errors
+  table <- htmlParse(p,encoding = "UTF-8") #Select the right encoding for the special characters (e.g. arrows)
+  tables <- readHTMLTable(table) #read all table from the html file
+  tables<-tables[[2]] #select just the table that we want (with the predicted mutations)
+  tables <- as.data.frame(tables) %>% #Transform table as a data frame
+    row_to_names(row_number = 1) %>% #Make first row to be the headers
+    relocate(population = 1) %>% #Put the population in the first column
+    mutate(population = p) #Add the name of the population to all rows of the first column
+  tables$population <- gsub(".html","",tables$population) #remove .html from the cells
+  tables$population <- gsub("Ancestral_files/","",tables$population) #remove Ancestral_files/ from the cells
+  tables$freq <- gsub("%","",tables$freq) #remove % from the cells
+  tables$freq <- as.numeric(tables$freq) #make freq as numeric
+  tables <- tables %>% mutate(freq = freq/100) #calculate freq
+  tables$position <- gsub(",","",tables$position) #remove commas from position
+  tables$position <- gsub(":1","",tables$position) #remove extra characters from position
+  tables$position <- gsub(":2","",tables$position) #remove extra characters from position
+  tables$position <- gsub(":3","",tables$position) #remove extra characters from position
+  tables$position <- gsub(":4","",tables$position) #remove extra characters from position
+  tables$position <- as.numeric(tables$position) #make position as numeric
+  Ancestral_R <- bind_rows(Ancestral_R,tables) #join all the populations in one table
+  Ancestral_R$population <- factor(Ancestral_R$population) #make population as a factor
+  
+}}
+
+if(length(list_of_populations_I) > 0){
+  for (p in list_of_ancestrals_I) { #loop to obtain the Ancestral Invader mutations/sequencing errors
+  table <- htmlParse(p,encoding = "UTF-8") #Select the right encoding for the special characters (e.g. arrows)
+  tables <- readHTMLTable(table) #read all table from the html file
+  tables<-tables[[2]] #select just the table that we want (with the predicted mutations)
+  tables <- as.data.frame(tables) %>% #Transform table as a data frame
+    row_to_names(row_number = 1) %>% #Make first row to be the headers
+    relocate(population = 1) %>% #Put the population in the first column
+    mutate(population = p) #Add the name of the population to all rows of the first column
+  tables$population <- gsub(".html","",tables$population) #remove .html from the cells
+  tables$population <- gsub("Ancestral_files/","",tables$population) #remove Ancestral_files/ from the cells
+  tables$freq <- gsub("%","",tables$freq) #remove % from the cells
+  tables$freq <- as.numeric(tables$freq) #make freq as numeric
+  tables <- tables %>% mutate(freq = freq/100) #calculate freq
+  tables$position <- gsub(",","",tables$position) #remove commas from position
+  tables$position <- gsub(":1","",tables$position) #remove extra characters from position
+  tables$position <- gsub(":2","",tables$position) #remove extra characters from position
+  tables$position <- gsub(":3","",tables$position) #remove extra characters from position
+  tables$position <- gsub(":4","",tables$position) #remove extra characters from position
+  tables$position <- as.numeric(tables$position) #make position as numeric
+  Ancestral_I <- bind_rows(Ancestral_I,tables) #join all the populations in one table
+  Ancestral_I$population <- factor(Ancestral_I$population) #make population as a factor
+  
+}}
+
+#Import file with the sequenced population that we want to filter
+##
+
+
+if(length(list_of_populations_R) > 0) {Populations_R <- data.frame() }#Creates an empty data frame for the loop
+if(length(list_of_populations_I) > 0) {Populations_I <- data.frame() }#Creates an empty data frame for the loop
+
+if(length(list_of_populations_R) > 0) {
+  for (p in list_of_populations_R) { #loop to obtain the population mutations/sequencing errors
+  table <- htmlParse(p,encoding = "UTF-8") #Select the right encoding for the special characters (e.g. arrows)
+  tables <- readHTMLTable(table) #read all table from the html file
+  tables<-tables[[2]] #select just the table that we want (with the predicted mutations)
+  tables <- as.data.frame(tables) %>% #Transform table as a data frame
+    row_to_names(row_number = 1) %>% #Make first row to be the headers
+    relocate(population = 1) %>% #Put the population in the first column
+    mutate(population = p) #Add the name of the population to all rows of the first column
+  tables$population <- gsub("_pop_R.html","",tables$population) #remove .html from the cells
+  tables$population <- gsub("input/","",tables$population) #remove input/ from the cells
+  tables$freq <- gsub("%","",tables$freq) #remove % from the cells
+  tables$freq <- as.numeric(tables$freq) #make freq as numeric
+  tables <- tables %>% mutate(freq = freq/100) #calculate freq
+  tables$position <- gsub(",","",tables$position) #remove commas from position
+  tables$position <- gsub(":1","",tables$position) #remove extra characters from position
+  tables$position <- gsub(":2","",tables$position) #remove extra characters from position
+  tables$position <- gsub(":3","",tables$position) #remove extra characters from position
+  tables$position <- as.numeric(tables$position) #make position as numeric
+  Populations_R <- bind_rows(Populations_R,tables) #join all the populations in one table
+  Populations_R$population <- factor(Populations_R$population) #make population as a factor
+  
+}}
+
+if(length(list_of_populations_I) > 0) {
+  for (p in list_of_populations_I) { #loop to obtain the population mutations/sequencing errors
+  table <- htmlParse(p,encoding = "UTF-8") #Select the right encoding for the special characters (e.g. arrows)
+  tables <- readHTMLTable(table) #read all table from the html file
+  tables<-tables[[2]] #select just the table that we want (with the predicted mutations)
+  tables <- as.data.frame(tables) %>% #Transform table as a data frame
+    row_to_names(row_number = 1) %>% #Make first row to be the headers
+    relocate(population = 1) %>% #Put the population in the first column
+    mutate(population = p) #Add the name of the population to all rows of the first column
+  tables$population <- gsub("_pop_I.html","",tables$population) #remove .html from the cells
+  tables$population <- gsub("input/","",tables$population) #remove input/ from the cells
+  tables$freq <- gsub("%","",tables$freq) #remove % from the cells
+  tables$freq <- as.numeric(tables$freq) #make freq as numeric
+  tables <- tables %>% mutate(freq = freq/100) #calculate freq
+  tables$position <- gsub(",","",tables$position) #remove commas from position
+  tables$position <- gsub(":1","",tables$position) #remove extra characters from position
+  tables$position <- gsub(":2","",tables$position) #remove extra characters from position
+  tables$position <- gsub(":3","",tables$position) #remove extra characters from position
+  tables$position <- as.numeric(tables$position) #make position as numeric
+  Populations_I <- bind_rows(Populations_I,tables) #join all the populations in one table
+  Populations_I$population <- factor(Populations_I$population) #make population as a factor
+  
+}}
+
+dir.create("results") # Creates the results folder
+
+if(length(list_of_populations_R) > 0){head(Ancestral_R)} # Shows the beginning of the Ancestral Resident mutation table
+if(length(list_of_populations_R) > 0){ # Exports table for Excel
+  head(Populations_R)
+  write_xlsx(as.data.frame(Populations_R),
+              "results/0_Original_mutation_list_Resident.xlsx")
+  }
+if(length(list_of_populations_I) > 0){head(Ancestral_I)} # Shows the beginning of the Ancestral Invader mutation table
+if(length(list_of_populations_I) > 0){ # Exports table for Excel
+  head(Populations_I)
+  write_xlsx(as.data.frame(Populations_I),
+              "results/0_Original_mutation_list_Invader.xlsx")
+  }
+```
+
+## 3rd Step: Filtering out the Ancestral mutations in the sequenced populations
+
+```{r Filtering out the Ancestral mutations in the sequenced populations and calculate e14 excision, message=FALSE, warning=FALSE}
+#Clean the sequenced population, removing exact same mutations that were present in the Ancestral
+
+if(length(list_of_populations_R) > 0){Populations_filtered_R <- data.frame() #creates an empty data frame to then put all the mutations filtered
+
+
+  for (p in levels(Populations_R$population)) { # Loop to get the mutation list of Resident populations
+  
+  Populations_filtered_R  <- Populations_R %>% filter(population == p) %>% rbind(Ancestral_R) %>% 
+    group_by(position,mutation,annotation,gene,description) %>% #Groups all the conditions except the frequency, to be able to count duplicates
+  mutate(n = n()) %>% #Adds the number of counts of each mutation in column "n"
+  filter(n<2) %>% #Removes the exact mutations that appeared in Ancestral and sequenced population
+  filter(!str_detect(population, "_Anc_R")) %>% #Removes the mutations that appear in the Ancestral but not in the sequenced population
+  dplyr::select(population,position,mutation,freq,annotation,gene,description) %>% #Removed the column "n" from the data 
+  bind_rows(Populations_filtered_R) #Joins data from all populations
+  Populations_filtered_R$population <-factor(Populations_filtered_R$population) #Makes the origin column as factor
+  Populations_filtered_R <- arrange(Populations_filtered_R,Populations_filtered_R$population)
+
+}
+
+Populations_filtered_R[c('mouse', 'day')] <- str_split_fixed(Populations_filtered_R$population, 'd', 2) # Creates column "mouse"  and "day"
+Populations_filtered_R <- Populations_filtered_R %>% 
+  relocate(mouse,day,.before = population) %>% # Relocates the columns mouse and day in the beginning
+  dplyr::select(-population) # removes the column population
+
+below_5_R <- Populations_filtered_R %>% 
+    filter(freq<0.05) # Creates file with mutations below 5%
+Populations_filtered_R <- Populations_filtered_R %>%
+    filter(freq>=0.05) # Removes the mutations that are below 5%
+
+below_5_to_join_R <- semi_join(below_5_R, # Selects mutations that are below 5% but that appear in other samples at a frequency above 5%
+                  Populations_filtered_R,by = c("position",
+                                                "mutation",
+                                                "annotation",
+                                                "gene",
+                                                "description"))
+
+Populations_filtered_R <- Populations_filtered_R %>% rbind(below_5_to_join_R) # joins the mutations that are below 5% but that appear in other samples at a frequency above 5%
+
+
+order <- colnames(Populations_filtered_R) # Record the order of the columns 
+Populations_filtered_R$day <- as.numeric(Populations_filtered_R$day) # Makes column day as numeric
+Populations_filtered_R <- Populations_filtered_R %>% group_by(mouse) %>% arrange(day) # Organizes the table by mouse and day
+
+}
+
+
+if(length(list_of_populations_I) > 0){Populations_filtered_I <- data.frame() #creates an empty data frame to then put all the mutations filtered
+
+Populations_I <- Populations_I %>% #Calculates the average if the same IS appears more than once (common in breseq)
+  group_by(population, position, mutation,annotation, gene, description) %>%
+  summarise(freq = mean(freq)) %>% 
+  relocate(freq,.after = mutation)
+
+for (p in levels(Populations_I$population)) {
+  
+  Populations_filtered_I  <- Populations_I %>% filter(population == p) %>% rbind(Ancestral_I) %>% 
+    group_by(position,mutation,annotation,gene,description) %>% #Groups all the conditions except the frequency, to be able to count duplicates
+  mutate(n = n()) %>% #Adds the number of counts of each mutation in column "n"
+  filter(n<2) %>% #Removes the exact mutations that appeared in Ancestral and sequenced population
+  filter(!str_detect(population, "_Anc_I")) %>% #Removes the mutations that appear in the Ancestral but not in the sequenced population
+  dplyr::select(population,position,mutation,freq,annotation,gene,description) %>% #Removed the column "n" from the data 
+  bind_rows(Populations_filtered_I) #Joins data from all populations
+  Populations_filtered_I$population <-factor(Populations_filtered_I$population) #Makes the origin column as factor
+  Populations_filtered_I <- arrange(Populations_filtered_I,Populations_filtered_I$population)
+
+}
+
+Populations_filtered_I[c('mouse', 'day')] <- str_split_fixed(Populations_filtered_I$population, 'd', 2) # Creates column "mouse"  and "day"
+Populations_filtered_I <- Populations_filtered_I %>% 
+  relocate(mouse,day,.before = population) %>% # Relocates the columns mouse and day in the beginning
+  dplyr::select(-population) # removes the column population
+
+order <- colnames(Populations_filtered_I) # Record the order of the columns 
+Populations_filtered_I$day <- as.numeric(Populations_filtered_I$day) # Makes column day as numeric
+Populations_filtered_I <- Populations_filtered_I %>% group_by(mouse) %>% arrange(day) # Organizes the table by mouse and day
+below_5_I <- Populations_filtered_I %>% 
+    filter(freq<0.05) # Creates file with mutations below 5%
+Populations_filtered_I <- Populations_filtered_I %>%
+    filter(freq>=0.05) # Removes the mutations that are below 5%
+
+below_5_to_join_I <- semi_join(below_5_I, # Selects mutations that are below 5% but that appear in other samples at a frequency above 5%
+                  Populations_filtered_I,by = c("position",
+                                                "mutation",
+                                                "annotation",
+                                                "gene",
+                                                "description"))
+
+Populations_filtered_I <- Populations_filtered_I %>% rbind(below_5_to_join_I) # Joins the mutations that are below 5% but that appear in other samples at a frequency above 5% with the mutation table
+
+
+
+#Calculates the excision of the e14 prophage
+
+list_of_populations_bam_I <- dir(path = "input/",pattern = "*pop_I.bam$",full.names = T) # Gets list of populations
+
+
+if(length(list_of_populations_bam_I) > 0){ # If there are populations proceed with the calculation of e14 excision
+  coverage_total_e14 <- data.frame()
+
+for (population in list_of_populations_bam_I) {
+  
+
+e14_region <- GRanges('NC_000913', IRanges(1194347, 1211226)) # Indicate the region of e14 and flanking regions
+
+e14_coverage <- as.data.frame(getCoverage(regions_of_interest = e14_region,bam_file = population)) # Obtain per base coverage of the region
+
+e14_coverage <- e14_coverage %>% 
+  mutate(population = population) %>% # Modify population name
+  dplyr::rename(position = start) # rename start with position
+
+e14_coverage$population <- gsub("_pop_I.bam","",e14_coverage$population) #remove .html from the cells
+e14_coverage$population <- gsub("input/","",e14_coverage$population) #remove input/ from the cells
+
+coverage_total_e14 <- rbind(coverage_total_e14,e14_coverage) # join all populations
+
+}
+
+coverage_total_e14[c('mouse', 'day')] <- str_split_fixed(coverage_total_e14$population, 'd', 2) # Creates column "mouse"  and "day"
+coverage_total_e14 <- coverage_total_e14 %>% 
+  relocate(mouse,day,.before = seqnames) %>% # Relocates the columns mouse and day in the beginning
+  dplyr::select(-population,-seqnames,-end,-width,-strand) # removes the columns population, seqnames, end, width, and strand
+
+# separate the coverage of each population by regions (icd - left flank, e14 - e14 region, icdC_and_iraM - right flank)
+coverage_total_e14$gene <- cut(coverage_total_e14$position,
+                             breaks = c(1194346,1195443,1210635,1211226),
+                             labels = c("icd","e14","icdC_and_iraM"))
+
+# calculate the median coverage for each region for each mouse population and sampling day
+e14_medians <- coverage_total_e14 %>% group_by(mouse,day,gene) %>%
+  summarize(median=median(coverage))
+
+e14_medians <- e14_medians %>% 
+  pivot_wider(id_cols = c("mouse","day"),
+              names_from = "gene",
+              values_from = "median")
+
+# Calculate excision of e14. This is calculated by calculating the mean frequency of the coverage ratio between e14 region and left flank (1-(e14/icd)) and the coverage ratio between e14 region and right flank (1-(e14/icdC_and_iraM))
+e14_medians <- e14_medians %>% 
+  mutate(excs1 = 1-(e14/icd), 
+         excs2 = 1-(e14/icdC_and_iraM), 
+         freq = ifelse(mean(c(excs1,excs2)) < 0, 0, mean(c(excs1,excs2))),
+         position = 1195443,
+         mutation = "Δ15,192 bp",
+         annotation = "e14 prophage loss",
+         gene = "e14 prophage",
+         day = as.numeric(day),
+         description = "e14 prophage excision")
+
+e14_medians <- e14_medians %>% dplyr::select(-c(icd,icdC_and_iraM,e14,excs1,excs2)) # Select just the frequency and population
+Populations_filtered_I <- bind_rows(Populations_filtered_I,e14_medians) # join all populations
+
+e14_below_5 <- Populations_filtered_I %>% 
+  filter(freq == 0, gene == "e14 prophage") # Creates file with e14 excision equal to 0%
+
+Populations_filtered_I <- anti_join(Populations_filtered_I, e14_below_5) # Removes the 0% e14 excision values
+
+ 
+#Removes the specific mutations in icd that are due to the excision of the e14 prophage (https://journals.asm.org/doi/pdf/10.1128/jb.171.7.4083-4084.1989)
+e14_mutations_to_remove <- Populations_filtered_I %>% 
+  filter(str_detect(gene,"icd") & str_detect(annotation,"H366H") & str_detect(annotation,"CAT")) 
+e14_mutations_to_remove <- Populations_filtered_I %>%
+  filter(str_detect(gene,"icd") & str_detect(annotation,"T370T") & str_detect(annotation,"ACT")) %>%
+  rbind(e14_mutations_to_remove)
+e14_mutations_to_remove <- Populations_filtered_I %>% 
+  filter(str_detect(gene,"icd") & str_detect(annotation,"L375L") & str_detect(annotation,"TTG")) %>%
+  rbind(e14_mutations_to_remove)
+e14_mutations_to_remove <- Populations_filtered_I %>% 
+  filter(str_detect(gene,"icd") & str_detect(annotation,"L375M") & str_detect(annotation,"CTG")) %>%
+  rbind(e14_mutations_to_remove)
+e14_mutations_to_remove <- Populations_filtered_I %>% 
+  filter(str_detect(gene,"icd") & str_detect(annotation,"L375M") & str_detect(annotation,"CTG")) %>%
+  rbind(e14_mutations_to_remove)
+e14_mutations_to_remove <- Populations_filtered_I %>% 
+  filter(str_detect(gene,"icd") & str_detect(annotation,"L375L") & str_detect(annotation,"CTA")) %>%
+  rbind(e14_mutations_to_remove)
+e14_mutations_to_remove <- Populations_filtered_I %>% 
+  filter(str_detect(gene,"icd") & str_detect(annotation,"N385N") & str_detect(annotation,"AAT")) %>%
+  rbind(e14_mutations_to_remove)
+e14_mutations_to_remove <- Populations_filtered_I %>% 
+  filter(str_detect(gene,"icd") & str_detect(annotation,"A386A") & str_detect(annotation,"GCC")) %>%
+  rbind(e14_mutations_to_remove)
+e14_mutations_to_remove <- Populations_filtered_I %>% 
+  filter(str_detect(gene,"icd") & str_detect(annotation,"K387K") & str_detect(annotation,"AAG")) %>%
+  rbind(e14_mutations_to_remove)
+e14_mutations_to_remove <- Populations_filtered_I %>% 
+  filter(str_detect(gene,"icd") & str_detect(annotation,"T390T") & str_detect(annotation,"ACT")) %>%
+  rbind(e14_mutations_to_remove)
+e14_mutations_to_remove <- Populations_filtered_I %>% 
+  filter(str_detect(gene,"icd") & str_detect(annotation,"E394E") & str_detect(annotation,"GAA")) %>%
+  rbind(e14_mutations_to_remove)
+e14_mutations_to_remove <- Populations_filtered_I %>% 
+  filter(str_detect(gene,"icd") & str_detect(annotation,"D398E") & str_detect(annotation,"GAA")) %>%
+  rbind(e14_mutations_to_remove)
+e14_mutations_to_remove <- Populations_filtered_I %>% 
+  filter(str_detect(gene,"icd") & str_detect(annotation,"K401K") & str_detect(annotation,"AAG")) %>%
+  rbind(e14_mutations_to_remove)
+e14_mutations_to_remove <- Populations_filtered_I %>% 
+    filter(str_detect(gene,"icd") & str_detect(annotation,"D410E") & str_detect(annotation,"GAA")) %>%
+  rbind(e14_mutations_to_remove) %>% distinct()
+Populations_filtered_I <- anti_join(Populations_filtered_I, e14_mutations_to_remove)   
+  
+  Populations_filtered_I <- Populations_filtered_I %>% group_by(mouse,day) %>% arrange(position)
+}
+ 
+gatZ <- Populations_filtered_I %>% #Removes the gatZ mutation present in Ancestral Invader
+  filter(str_detect(gene,"gatZ") & 
+           str_detect(annotation,"814") & 
+           str_detect(annotation,"822") &
+           str_detect(annotation,"1263") &
+           str_detect(annotation,"coding") &
+           str_detect(mutation,"IS1") &
+           str_detect(position,"2173522"))
+
+Populations_filtered_I <- anti_join(Populations_filtered_I, gatZ)
+
+ylbE <- Populations_filtered_I %>% #Removes the ylbE mutation present in Ancestral Invader that can be differently annotated due to the breseq version
+  filter(str_detect(gene,"ylbE") & 
+           str_detect(annotation,"251") & 
+           str_detect(annotation,"252") &
+           str_detect(annotation,"pseudogene") &
+           str_detect(mutation,"G") &
+           str_detect(position,"547831"))
+
+Populations_filtered_I <- anti_join(Populations_filtered_I, ylbE)
+
+
+}
+
+if(length(list_of_populations_I) > 0) { # Plots the coverage of the e14 region and flanking regions
+  ggplot(coverage_total_e14,aes(x=gene,y=coverage))+
+  ggbeeswarm::geom_quasirandom()+
+  geom_boxplot(alpha=0.3)+
+  cowplot::theme_cowplot()+
+  cowplot::background_grid()+
+  theme(aspect.ratio = 1)+
+  facet_wrap(~mouse+day,ncol = 3)
+}
+
+
+```
+
+### You can copy the tables above to new excel files.
+
+```{r Exporting table of mutations with Ancestral mutations removed, message=FALSE, warning=FALSE}
+
+#Remove special characters to get the table if you want to export
+if(length(list_of_populations_R) > 0){
+
+  write_xlsx(as.data.frame(Populations_filtered_R),
+              "results/1_Table_without_Ancestral_Resident_mutations.xlsx")
+  write_xlsx(as.data.frame(Ancestral_R),
+              "results/0_Ancestral_Resident_mutations.xlsx")
+  
+  Populations_R[c('mouse', 'day')] <- str_split_fixed(Populations_R$population, 'd', 2)
+   Populations_R <- Populations_R %>% dplyr::select(-population)
+   Populations_R <- Populations_R %>% 
+  relocate(mouse,day,.before = position)
+ Populations_R$day <- as.numeric(Populations_R$day)
+  
+  
+  Ancestral_R_removed <- anti_join(as.data.frame(Populations_R),Populations_filtered_R)
+
+  write_xlsx(as.data.frame(Ancestral_R_removed),
+              "results/1_Ancestral_Resident_Removed_mutations_and_below_5%.xlsx")
+  
+  
+}
+if(length(list_of_populations_I) > 0){
+
+  write_xlsx(as.data.frame(Populations_filtered_I),
+              "results/1_Table_without_Ancestral_Invader_mutations.xlsx")
+  write_xlsx(as.data.frame(Ancestral_I),
+              "results/0_Ancestral_Invader_mutations.xlsx")
+  
+  Populations_I[c('mouse', 'day')] <- str_split_fixed(Populations_I$population, 'd', 2)
+   Populations_I <- Populations_I %>% dplyr::select(-population)
+   Populations_I <- Populations_I %>% 
+  relocate(mouse,day,.before = position)
+ Populations_I$day <- as.numeric(Populations_I$day)
+  
+  
+  Ancestral_I_removed <- anti_join(as.data.frame(Populations_I),Populations_filtered_I)
+
+  write_xlsx(as.data.frame(Ancestral_I_removed),
+              "results/1_Ancestral_Invader_Removed_mutations_and_below_5%.xlsx")
+  
+}
+```
+
+## 4th Step: Filtering out phage mutations that were described in Frazão et al 2019 (PNAS)
+
+### In this step, mutations due to the phage transfer described in Frazão et al 2019 (PNAS) are removed and stored in a new file. 
+
+```{r Filtering out phage mutations that were described in Frazão et al 2019 (PNAS)}
+
+# Removes the mutations that are due to phage transfer and were described by Frazão et al 2019.
+if(length(list_of_populations_I) > 0){ 
+
+Phage_mutations_PNAS <- read_excel("Ancestral_files/Phage_mutations_PNAS.xlsx", 
+                                   col_types = c("numeric", 
+                                                 "text",
+                                                 "text", 
+                                                 "text", 
+                                                 "text")) %>% distinct()
+
+Populations_filtered_I_PNAS <- merge(Populations_filtered_I, 
+                                     Phage_mutations_PNAS,
+                                     all=T)
+
+Populations_filtered_I_PNAS$remove <- replace(Populations_filtered_I_PNAS$remove,
+                                              is.na(Populations_filtered_I_PNAS$remove), 
+                                              "No")
+
+PhageMutations_PNAS_filtered_I <- Populations_filtered_I_PNAS %>% 
+  subset(remove == "Yes") %>% 
+  dplyr::select(mouse, 
+                day, 
+                position, 
+                mutation, 
+                freq, 
+                annotation, 
+                gene, 
+                description,
+                -remove) %>%
+  na.omit() %>%
+  distinct() %>%
+  arrange(mouse,day,position)
+
+
+Populations_filtered_I_PNAS_2 <- Populations_filtered_I_PNAS %>% 
+  subset(remove == "No") %>% 
+  dplyr::select(mouse, 
+                day,
+                position, 
+                mutation, 
+                freq,
+                annotation, 
+                gene, 
+                description,
+                -remove) %>%
+  arrange(mouse,day,position)
+
+
+ write_xlsx(as.data.frame(Populations_filtered_I_PNAS_2),
+              "results/2_Table_without_Phage_mutations_PNAS.xlsx")
+ write_xlsx(as.data.frame(PhageMutations_PNAS_filtered_I),
+              "results/2_Removed_Phage_mutations_PNAS.xlsx")
+
+}
+
+```
+
+
+## 5th Step: Filtering out mutations that match 100% with the Resident genome (using BLAST)
+
+### In this step, mutations due to phage transfer or other HGT events from the Resident are removed and stored in a new file. 
+
+```{r Filtering out mutations that match 100% with the Resident genome (using BLAST), message=FALSE, warning=FALSE}
+
+if(length(list_of_populations_I) > 0){
+  
+Populations_filtered_I <- Populations_filtered_I_PNAS_2
+  
+list_of_populations_bam_I <- dir(path = "input/",pattern = "*pop_I.bam$",full.names = T) # Creates list of populations with bam file
+
+#makeblastdb(file = "Blast_databases/residentBacterialGenome.fa",dbtype = "nucl") # Creates BLAST database for the Resident genome
+#makeblastdb(file = "Blast_databases/invaderBacterialGenome.fa",dbtype = "nucl") # Creates BLAST database for the Invader genome
+
+position_BLAST <- filter (Populations_filtered_I, Populations_filtered_I$position != 1195443) %>% 
+  dplyr::select(mouse,  # Makes list with the positions of each predicted mutation in the Invader populations
+                day,
+                position) %>% 
+  group_by(mouse,day) %>%
+  pivot_wider(names_from = c("mouse",
+                             "day"),
+              names_sep = "d",
+              values_from = "position",
+              values_fn = list)
+
+Mut_to_Remove_BLAST_Final <- data.frame()
+Mut_to_Remove_BLAST_pop <- data.frame()
+Merge_all <- data.frame()
+
+
+  
+for (population in list_of_populations_bam_I) { # Loop to blast the reads of each position against Invader and Resident genome
+  
+  population1 <- gsub("_pop_I.bam","",population)
+  population1 <- gsub("input/","",population1)
+  list_I <- as.list(list.match(position_BLAST, population1))
+  
+  for (p in unlist(list_I)) {
+    
+    params <- ScanBamParam(which = GRanges('NC_000913', IRanges(p-1, p+1)), what = "seq") 
+    aln <- scanBam(population, param = params)
+    position <- aln[[1]][["seq"]]
+    bl_Inv <- blast(db="Blast_databases/invaderBacterialGenome.fa")
+    cl_Inv <- predict(bl_Inv,
+                      position,BLAST_args = c("-perc_identity 99",
+                                              "-max_hsps 1",
+                                              "-qcov_hsp_perc 100"))
+    
+    bl_Res <- blast(db="Blast_databases/residentBacterialGenome.fa")
+    cl_Res <- predict(bl_Res,
+                      position,BLAST_args = c("-perc_identity 100",
+                                              "-max_hsps 1",
+                                              "-qcov_hsp_perc 100"))
+    
+     if (length(cl_Res$pident) == 0  & length(cl_Inv$pident) == 0) { # Adds 0 if there are no matching reads with the resident genome
+      
+      cl_Res <- add_row(cl_Res) %>%  
+        mutate(sseqid = "4_ResidentBacterialGenome.fa", pident = 0) %>%
+        dplyr::select(qseqid,sseqid, pident)
+      
+      cl_Inv <- add_row(cl_Inv) %>%  
+        mutate(sseqid = "NC_000913.2", pident = 0) %>%
+        dplyr::select(qseqid,sseqid, pident)
+      
+      Merge <- rbind(cl_Res, cl_Inv) %>%
+        pivot_wider(id_cols = "qseqid",names_from = "sseqid",values_from = "pident") 
+      Merge <- Merge %>%
+        mutate(delta = NC_000913.2-`4_ResidentBacterialGenome.fa`,population = population, 
+               position = p)
+    }
+    
+    if (length(cl_Res$pident) == 0  & length(cl_Inv$pident) > 0) { # Adds 0 if there are no matching reads with the resident genome
+      
+      cl_Res <- cl_Inv %>% 
+        mutate(sseqid = "4_ResidentBacterialGenome.fa", pident = 0) %>%
+        dplyr::select(qseqid,sseqid, pident)
+      
+      cl_Inv <- cl_Inv %>% mutate(sseqid = "NC_000913.2") %>%
+        dplyr::select(qseqid,sseqid, pident)
+      
+      Merge <- rbind(cl_Res, cl_Inv) %>%
+        pivot_wider(id_cols = "qseqid",names_from = "sseqid",values_from = "pident") 
+      
+      Merge <- Merge %>%
+        mutate(delta = NC_000913.2-`4_ResidentBacterialGenome.fa`,population = population, 
+               position = p)
+    }
+    
+    if (length(cl_Res$pident) > 0  & length(cl_Inv$pident) == 0) { # Adds 0 if there are no matching reads with the invader genome
+      
+      cl_Res <- cl_Res %>% 
+        mutate(sseqid = "4_ResidentBacterialGenome.fa") %>%
+        dplyr::select(qseqid,sseqid, pident)
+      
+      cl_Inv <- cl_Res %>% mutate(sseqid = "NC_000913.2", pident = 0) %>%
+        dplyr::select(qseqid,sseqid, pident)
+      
+      Merge <- rbind(cl_Res, cl_Inv) %>%
+        pivot_wider(id_cols = "qseqid",names_from = "sseqid",values_from = "pident") 
+      
+      Merge <- Merge %>%
+        mutate(delta = NC_000913.2-`4_ResidentBacterialGenome.fa`,population = population, 
+               position = p)
+    }
+    
+    if (length(cl_Res$pident) > 0 & length(cl_Inv$pident) > 0) { # Merges results from BLAST
+      
+      Merge <- rbind(dplyr::select(cl_Res,qseqid,sseqid, pident), 
+                     dplyr::select(cl_Inv,qseqid,sseqid, pident)) %>%
+        pivot_wider(id_cols = "qseqid",names_from = "sseqid",values_from = "pident")
+      
+      Merge <- Merge %>% mutate(`4_ResidentBacterialGenome.fa` = ifelse(is.na(`4_ResidentBacterialGenome.fa`),0,`4_ResidentBacterialGenome.fa`),
+                                NC_000913.2 = ifelse(is.na(NC_000913.2),0,NC_000913.2))
+      
+      Merge <- Merge %>%
+      mutate(delta = NC_000913.2-`4_ResidentBacterialGenome.fa`) %>% 
+        mutate(population = population, 
+               position = p)
+    }
+    
+    
+    Mut_to_Remove_BLAST <- as.data.frame(cbind(quantile(Merge$delta, 
+                                                        probs = .01),
+                                               population,
+                                               p))
+    
+    Mut_to_Remove_BLAST <- Mut_to_Remove_BLAST %>%
+      mutate(remove = ifelse(V1 < 0,
+                             "Yes",
+                             "No")) %>%
+      distinct()
+      
+    
+    
+  Mut_to_Remove_BLAST_pop <- rbind(Mut_to_Remove_BLAST_pop,
+                                     Mut_to_Remove_BLAST)
+  
+  Merge_all <- rbind(Merge_all,Merge)
+  }
+  
+Mut_to_Remove_BLAST_Final <- rbind(Mut_to_Remove_BLAST_Final,
+                                     Mut_to_Remove_BLAST_pop)
+}
+
+if (length(Mut_to_Remove_BLAST_Final$p) > 0) {
+  
+Mut_to_Remove_BLAST_Final$population <- gsub("_pop_I.bam",
+                                             "",
+                                             Mut_to_Remove_BLAST_Final$population) #remove .bam from the cells
+Mut_to_Remove_BLAST_Final$population <- gsub("input/",
+                                             "",
+                                             Mut_to_Remove_BLAST_Final$population) #remove input/ from the cells
+Mut_to_Remove_BLAST_Final[c('mouse', 'day')] <- str_split_fixed(Mut_to_Remove_BLAST_Final$population,
+                                                                'd',
+                                                                2)
+Mut_to_Remove_BLAST_Final <- Mut_to_Remove_BLAST_Final %>% 
+  relocate(mouse,
+           day,
+           .before = population) %>%
+  dplyr::select(-population)
+
+Mut_to_Remove_BLAST_Final <- Mut_to_Remove_BLAST_Final %>% rename(position = p)
+Mut_to_Remove_BLAST_Final <- merge(Mut_to_Remove_BLAST_Final,Populations_filtered_I)
+
+Clean_table_blast_I <- Mut_to_Remove_BLAST_Final %>% subset(remove == "No") %>% dplyr::select(-V1,-remove)
+Removed_mutations_BLAST <- Mut_to_Remove_BLAST_Final %>% subset(remove == "Yes") %>% dplyr::select(-V1,-remove) %>% distinct()
+Clean_table_blast_I <- Clean_table_blast_I %>% distinct()
+
+}
+
+if (length(Mut_to_Remove_BLAST_Final$p) == 0) {
+
+  Clean_table_blast_I <- Populations_filtered_I
+  Removed_mutations_BLAST <- Populations_filtered_I[
+  Populations_filtered_I$position %in% Mut_to_Remove_BLAST_Final,]
+    
+}
+
+  Clean_table_blast_I$position <- as.numeric(Clean_table_blast_I$position)
+  Clean_table_blast_I$day <- as.numeric(Clean_table_blast_I$day)
+  Clean_table_blast_I <- bind_rows(Clean_table_blast_I,e14_medians) # joins the e14 excision calculations
+  Clean_table_blast_I <- Clean_table_blast_I %>% arrange(mouse,day,position)
+  
+  write_xlsx(as.data.frame(Clean_table_blast_I),
+              "results/3_Table_Invader_mutations_BLAST_cleaned.xlsx")
+  
+  
+  Removed_mutations_BLAST$position <- as.numeric(Removed_mutations_BLAST$position)
+  Removed_mutations_BLAST$day <- as.numeric(Removed_mutations_BLAST$day)
+  Removed_mutations_BLAST <- Removed_mutations_BLAST %>% arrange(mouse,day,position)
+  
+  write_xlsx(as.data.frame(Removed_mutations_BLAST),
+              "results/3_Table_of_Removed_Invader_mutations_BLAST.xlsx")
+  
+}
+
+```
+
+
+## 6th Step: Filtering out mutations that match 100% with the Invader genome (using BLAST)
+```{r Filtering out mutations that match 100% with the Invader genome (using BLAST), message=FALSE, warning=FALSE}
+
+if(length(list_of_populations_R) > 0){
+  
+  
+list_of_populations_bam_R <- dir(path = "input/",pattern = "*pop_R.bam$",full.names = T) # Creates list of populations with bam file
+
+#makeblastdb(file = "Blast_databases/residentBacterialGenome.fa",dbtype = "nucl") # Creates BLAST database for the Resident genome
+#makeblastdb(file = "Blast_databases/invaderBacterialGenome.fa",dbtype = "nucl") # Creates BLAST database for the Invader genome
+
+position_BLAST_R <- filter (Populations_filtered_R) %>% 
+  dplyr::select(mouse,  # Makes list with the positions of each predicted mutation in the Invader populations
+                day,
+                position) %>% 
+  group_by(mouse,day) %>%
+  pivot_wider(names_from = c("mouse",
+                             "day"),
+              names_sep = "d",
+              values_from = "position",
+              values_fn = list) 
+
+Mut_to_Remove_BLAST_Final_R <- data.frame()
+Mut_to_Remove_BLAST_pop_R <- data.frame()
+Merge_all_R <- data.frame()
+
+
+  
+for (population in list_of_populations_bam_R) { # Loop to blast the reads of each position against Invader and Resident genome
+  
+  population1_R <- gsub("_pop_R.bam","",population)
+  population1_R <- gsub("input/","",population1_R)
+  list_R <- as.list(list.match(position_BLAST_R, population1_R))
+  
+  for (p in unlist(list_R)) {
+    
+    params <- ScanBamParam(which = GRanges('NC_000913', IRanges(p-1, p+1)), what = "seq") 
+    aln <- scanBam(population, param = params)
+    position <- aln[[1]][["seq"]]
+    bl_Inv <- blast(db="Blast_databases/invaderBacterialGenome.fa")
+    cl_Inv <- predict(bl_Inv,
+                      position,BLAST_args = c("-perc_identity 100",
+                                              "-max_hsps 1",
+                                              "-qcov_hsp_perc 100"))
+    
+    bl_Res <- blast(db="Blast_databases/residentBacterialGenome.fa")
+    cl_Res <- predict(bl_Res,
+                      position,BLAST_args = c("-perc_identity 99",
+                                              "-max_hsps 1",
+                                              "-qcov_hsp_perc 100"))
+    
+     if (length(cl_Res$pident) == 0  & length(cl_Inv$pident) == 0) { # Adds 0 if there are no matching reads with the resident genome
+      
+      cl_Res <- add_row(cl_Res) %>%  
+        mutate(sseqid = "4_ResidentBacterialGenome.fa", pident = 0) %>%
+        dplyr::select(qseqid,sseqid, pident)
+      
+      cl_Inv <- add_row(cl_Inv) %>%  
+        mutate(sseqid = "NC_000913.2", pident = 0) %>%
+        dplyr::select(qseqid,sseqid, pident)
+      
+      Merge <- rbind(cl_Res, cl_Inv) %>%
+        pivot_wider(id_cols = "qseqid",names_from = "sseqid",values_from = "pident") 
+      Merge <- Merge %>%
+        mutate(delta = NC_000913.2-`4_ResidentBacterialGenome.fa`,population = population, 
+               position = p)
+    }
+    
+    if (length(cl_Res$pident) == 0  & length(cl_Inv$pident) > 0) { # Adds 0 if there are no matching reads with the resident genome
+      
+      cl_Res <- cl_Inv %>% 
+        mutate(sseqid = "4_ResidentBacterialGenome.fa", pident = 0) %>%
+        dplyr::select(qseqid,sseqid, pident)
+      
+      cl_Inv <- cl_Inv %>% mutate(sseqid = "NC_000913.2") %>%
+        dplyr::select(qseqid,sseqid, pident)
+      
+      Merge <- rbind(cl_Res, cl_Inv) %>%
+        pivot_wider(id_cols = "qseqid",names_from = "sseqid",values_from = "pident") 
+      
+      Merge <- Merge %>%
+        mutate(delta = NC_000913.2-`4_ResidentBacterialGenome.fa`,population = population, 
+               position = p)
+    }
+    
+    if (length(cl_Res$pident) > 0  & length(cl_Inv$pident) == 0) { # Adds 0 if there are no matching reads with the invader genome
+      
+      cl_Res <- cl_Res %>% 
+        mutate(sseqid = "4_ResidentBacterialGenome.fa") %>%
+        dplyr::select(qseqid,sseqid, pident)
+      
+      cl_Inv <- cl_Res %>% mutate(sseqid = "NC_000913.2", pident = 0) %>%
+        dplyr::select(qseqid,sseqid, pident)
+      
+      Merge <- rbind(cl_Res, cl_Inv) %>%
+        pivot_wider(id_cols = "qseqid",names_from = "sseqid",values_from = "pident") 
+      
+      Merge <- Merge %>%
+        mutate(delta = NC_000913.2-`4_ResidentBacterialGenome.fa`,population = population, 
+               position = p)
+    }
+    
+    if (length(cl_Res$pident) > 0 & length(cl_Inv$pident) > 0) { # Merges results from BLAST
+      
+      Merge <- rbind(dplyr::select(cl_Res,qseqid,sseqid, pident), 
+                     dplyr::select(cl_Inv,qseqid,sseqid, pident)) %>%
+        pivot_wider(id_cols = "qseqid",names_from = "sseqid",values_from = "pident")
+      
+      Merge <- Merge %>% mutate(`4_ResidentBacterialGenome.fa` = ifelse(is.na(`4_ResidentBacterialGenome.fa`),0,`4_ResidentBacterialGenome.fa`),
+                                NC_000913.2 = ifelse(is.na(NC_000913.2),0,NC_000913.2))
+      
+      Merge <- Merge %>%
+      mutate(delta = `4_ResidentBacterialGenome.fa`-NC_000913.2) %>% 
+        mutate(population = population, 
+               position = p)
+    }
+    
+    
+    Mut_to_Remove_BLAST_R <- as.data.frame(cbind(quantile(Merge$delta, 
+                                                        probs = .01),
+                                               population,
+                                               p))
+    
+    Mut_to_Remove_BLAST_R <- Mut_to_Remove_BLAST_R %>%
+      mutate(remove = ifelse(V1 < 0,
+                             "Yes",
+                             "No")) %>%
+      distinct()
+      
+    
+    
+  Mut_to_Remove_BLAST_pop_R <- rbind(Mut_to_Remove_BLAST_pop_R,
+                                     Mut_to_Remove_BLAST_R)
+  
+  Merge_all_R <- rbind(Merge_all_R,Merge)
+  }
+  
+Mut_to_Remove_BLAST_Final_R <- rbind(Mut_to_Remove_BLAST_Final_R,
+                                     Mut_to_Remove_BLAST_pop_R)
+}
+
+if (length(Mut_to_Remove_BLAST_Final_R$p) > 0) {
+  
+Mut_to_Remove_BLAST_Final_R$population <- gsub("_pop_R.bam",
+                                             "",
+                                             Mut_to_Remove_BLAST_Final_R$population) #remove .bam from the cells
+Mut_to_Remove_BLAST_Final_R$population <- gsub("input/",
+                                             "",
+                                             Mut_to_Remove_BLAST_Final_R$population) #remove input/ from the cells
+Mut_to_Remove_BLAST_Final_R[c('mouse', 'day')] <- str_split_fixed(Mut_to_Remove_BLAST_Final_R$population,
+                                                                'd',
+                                                                2)
+Mut_to_Remove_BLAST_Final_R <- Mut_to_Remove_BLAST_Final_R %>% 
+  relocate(mouse,
+           day,
+           .before = population) %>%
+  dplyr::select(-population)
+
+Mut_to_Remove_BLAST_Final_R <- Mut_to_Remove_BLAST_Final_R %>% rename(position = p)
+Mut_to_Remove_BLAST_Final_R <- merge(Mut_to_Remove_BLAST_Final_R,Populations_filtered_R)
+
+Clean_table_blast_R <- Mut_to_Remove_BLAST_Final_R %>% subset(remove == "No") %>% dplyr::select(-V1,-remove)
+Removed_mutations_BLAST_R <- Mut_to_Remove_BLAST_Final_R %>% subset(remove == "Yes") %>% dplyr::select(-V1,-remove) %>% distinct()
+Clean_table_blast_R <- Clean_table_blast_R %>% distinct()
+
+}
+
+if (length(Mut_to_Remove_BLAST_Final_R$p) == 0) {
+
+  Clean_table_blast_R <- Populations_filtered_R
+  Removed_mutations_BLAST_R <- Populations_filtered_R[
+  Populations_filtered_R$position %in% Mut_to_Remove_BLAST_Final_R,]
+    
+}
+
+  Clean_table_blast_R$position <- as.numeric(Clean_table_blast_R$position)
+  Clean_table_blast_R$day <- as.numeric(Clean_table_blast_R$day)
+  Clean_table_blast_R <- Clean_table_blast_R %>% arrange(mouse,day,position)
+  
+  write_xlsx(as.data.frame(Clean_table_blast_R),
+              "results/3_Table_Resident_mutations_BLAST_cleaned.xlsx")
+  
+  
+  Removed_mutations_BLAST_R$position <- as.numeric(Removed_mutations_BLAST_R$position)
+  Removed_mutations_BLAST_R$day <- as.numeric(Removed_mutations_BLAST_R$day)
+  Removed_mutations_BLAST_R <- Removed_mutations_BLAST_R %>% arrange(mouse,day,position)
+  
+  write_xlsx(as.data.frame(Removed_mutations_BLAST_R),
+              "results/3_Table_of_Removed_Resident_mutations_BLAST.xlsx")
+  
+}
+
+```
+
+## 7th Step: Filtering out mutations that were detected in the ancestral but not called by breseq due to low coverage
+
+### Important: we need the bam file with the alignments of the mCherry and sfGFP reads (names Resident_as_pop.bam, already provided and explained below how to obtain it manually)
+
+
+Using these bypasses the manual check in IGV. At each position, those that the exact same mutation was detected with a percentage higher than 1.5% and more than 3 reads in the ancestral whole-genome sequencing reads were removed from the final mutation list.
+
+```{r Count the nucleotide variants at each position and filter the mutation table}
+#First we need to have the merged bam file from both mCherry and sfGFP strains. This is obtained in linux using samtools, original bam files from each mCherry and sfGFP are in the breseq results (in the output folder, named reference.bam)
+##Code for linux (merge): samtools merge Resident_as_pop.bam input_mCherry.bam input_sfGFP.bam
+##Code for linux (create index): samtools index Resident_as_pop.bam
+
+#Obtain the nucleotide counts for each position of the mutation list
+if(length(list_of_populations_R) > 0){
+counts_total_R <- data.frame() #create a empty dataframe to put all data in the end of the loop
+
+
+#create a loop that will count the different nucleotides detected in each position of the Populations_filtered
+
+for (position in as.numeric(Clean_table_blast_R$position)) {
+  #counts nucleotides based on the position ("q" accounts for the minimum quality of each nucleotide
+  counts <- bam2R(file = list.files(path = "Ancestral_files/",
+                                    pattern = "*\\_pop_R.bam$",
+                                    full.names = T), 
+                  chr = "NC_000913", 
+                  start = position, 
+                  q = 0, stop = position, 
+                  verbose = F)
+
+  counts <- cbind(position,counts) #Adds the position to first column
+  
+  counts <- as.data.frame(counts) %>% mutate(.keep = "none",
+                                             position = position,
+                                             Total_A = sum(A+a),
+                                             Total_T = sum(T+t),
+                                             Total_C = sum(C+c),
+                                             Total_G = sum(G+g), 
+                                             Total_INS = sum(INS+ins),
+                                             Total_DEL = sum(counts[[6]]+counts[[17]]),
+                                             Total_Reads = sum(Total_A,
+                                                               Total_T,
+                                                               Total_C,
+                                                               Total_G,
+                                                               Total_INS,
+                                                               Total_DEL))
+  
+  counts_total_R <- rbind(counts_total_R,counts) #%>% #joins data from each position
+    #distinct() #removes repeated positions
+
+}
+
+
+mutations_observed_R <- ifelse(nchar(Clean_table_blast_R$mutation) == 3, #This is to identify the variant nucleotide in the population
+                             substring(Clean_table_blast_R$mutation,3,3),
+                             Clean_table_blast_R$mutation)
+mutations_observed_R <- ifelse(str_detect(mutations_observed_R, "\\Δ"),"DEL",mutations_observed_R) #This is to identify the deletions
+mutations_observed_R <- ifelse(str_detect(mutations_observed_R, "\\++"),"INS",mutations_observed_R) #This is to identify the insertions
+
+counts_total_R <- counts_total_R %>% mutate(frequency_A = Total_A/Total_Reads, #calculates the frequency of these variants in Ancestral
+                        frequency_T = Total_T/Total_Reads, #calculates the frequency of these variants in Ancestral
+                        frequency_C = Total_C/Total_Reads, #calculates the frequency of these variants in Ancestral
+                        frequency_G = Total_G/Total_Reads, #calculates the frequency of these variants in Ancestral
+                        frequency_INS = Total_INS/Total_Reads, #calculates the frequency of these variants in Ancestral
+                        frequency_DEL = Total_DEL/Total_Reads) #calculates the frequency of these variants in Ancestral
+
+counts_total_R<-cbind(counts_total_R,mutations_observed_R) #Joins the observed variants in the population with the counts table
+
+
+counts_total_R$A<- ifelse(counts_total_R$Total_A > 3,
+                        ifelse(counts_total_R$frequency_A > 0.015,
+                               TRUE,
+                               FALSE),
+                        FALSE) #Calculates if this variant passes the treshold
+counts_total_R$T<- ifelse(counts_total_R$Total_T > 3,
+                        ifelse(counts_total_R$frequency_T > 0.015,
+                               TRUE,
+                               FALSE),
+                        FALSE) #Calculates if this variant passes the treshold
+counts_total_R$C<- ifelse(counts_total_R$Total_C > 3,
+                        ifelse(counts_total_R$frequency_C > 0.015,
+                               TRUE,
+                               FALSE),
+                        FALSE) #Calculates if this variant passes the treshold
+counts_total_R$G<- ifelse(counts_total_R$Total_G > 3,
+                        ifelse(counts_total_R$frequency_G > 0.015,
+                               TRUE,
+                               FALSE),
+                        FALSE) #Calculates if this variant passes the treshold
+counts_total_R$INS<- ifelse(counts_total_R$Total_INS > 3,
+                          ifelse(counts_total_R$frequency_INS > 0.015,
+                                 TRUE,
+                                 FALSE),
+                          FALSE) #Calculates if this variant passes the treshold
+counts_total_R$DEL<- ifelse(counts_total_R$Total_DEL > 3,
+                          ifelse(counts_total_R$frequency_DEL > 0.015,
+                                 TRUE,
+                                 FALSE),
+                          FALSE) #Calculates if this variant passes the treshold
+
+
+counts_total_R$pass_treshold <- counts_total_R[-ncol(counts_total_R)][cbind(seq_len(nrow(counts_total_R)), #Adds a new column showing if the variant in the sequenced population passes the threshold
+  match(counts_total_R$mutations_observed,
+        sub("", 
+            "", 
+            names(counts_total_R)[-ncol(counts_total_R)])))]
+
+counts_total_R$pass_treshold <- as.logical(counts_total_R$pass_treshold) #Makes the pass_treshold column as logical
+counts_total_R <- counts_total_R %>% mutate(pass_treshold = coalesce(pass_treshold,DEL)) #Corrects the NA values for deletions
+
+mutations_to_remove_R <- ifelse(counts_total_R$pass_treshold == TRUE, counts_total_R$position, NA) #Creates a list with the mutations that pass the treshold and have to be removed
+mutations_to_remove_R <- na.exclude(mutations_to_remove_R) #Removes NA from the list
+
+Clean_table_R <- Clean_table_blast_R[!Clean_table_blast_R$position %in% mutations_to_remove_R,] #Cleans the mutation table
+Removed_mutations_R <- Clean_table_blast_R[
+  Clean_table_blast_R$position %in% mutations_to_remove_R,] #Creates tables with removed mutations
+
+Paralellism_mut_R <- Clean_table_R %>%
+  group_by(mouse,day,mutation,annotation,gene,description) %>%
+  dplyr::select(mouse,day,mutation,annotation,gene,description) %>%
+  distinct() %>%
+  group_by(day,mutation,annotation,gene) %>%
+  mutate("Mutation_paralellism" = n())
+
+Paralellism_gene_R <- Clean_table_R %>%
+  group_by(mouse,day,gene) %>%
+  dplyr::select(mouse,day,gene) %>%
+  distinct() %>%
+  group_by(day,gene) %>%
+  mutate("Gene_paralellism" = n())
+
+Clean_table_R <- Clean_table_R %>% 
+  merge(Paralellism_mut_R) %>% 
+  merge(Paralellism_gene_R)
+
+Clean_table_R <- Clean_table_R %>%
+  group_by(mouse, day,position) %>%
+  arrange(position, .by_group = T)
+
+Clean_table_R <- Clean_table_R %>% 
+  dplyr::select(all_of(order),'Mutation_paralellism','Gene_paralellism') 
+
+Clean_table_R$day <- as.numeric(Clean_table_R$day)
+Clean_table_R$position <- as.numeric(Clean_table_R$position)
+Clean_table_R <- Clean_table_R %>% group_by(mouse) %>% arrange(mouse,day,position)
+  
+
+Final_table_R <- as.data.frame(Clean_table_R) %>% 
+  reactable(
+    highlight = T,
+    filterable = T,
+    theme = reactableTheme(searchInputStyle = list(width = "100%")),
+    groupBy = c('mouse','day'),
+    style = list(#fontFamily = "sans-serif", 
+                 fontSize = "11pt"),
+    rowStyle = function(index) {
+      if (Clean_table_R[index,
+                      "Gene_paralellism"] > 1) list(fontWeight = "bold")
+    },
+    searchable = T,
+    defaultExpanded = F,
+    columns = list(
+      mouse = colDef(width = 150,
+                     sticky = "left",align = "left", 
+                     name = "Mouse"),
+      day = colDef(width = 100,aggregate = "unique",
+                   align = "left",
+                   sticky = "left", 
+                   name = "Day"),
+      position = colDef(width = 100,
+                        align = "left", 
+                        name = "Position"),
+      mutation = colDef(width = 100,
+                        align = "left", 
+                        name = "Mutation"),
+      freq = colDef(
+        width = 100,
+        align = "left", 
+        name = "Frequency",
+        cell = color_tiles(.,
+                           even_breaks = F,
+                           number_fmt = scales::label_number(accuracy = .001),
+                           colors = viridis(n = length(Clean_table_R$freq)),
+                           box_shadow = T)),
+      annotation = colDef(width = 200,
+                          align = "left", 
+                          name = "Annotation"),
+      gene = colDef(width = 250,
+                    align = "left", 
+                    name = "Gene"),
+      description = colDef(width = 230,
+                           align = "left", 
+                           name = "Description"),
+      Mutation_paralellism = colDef(width = 100,
+                                    align = "center",
+                                    name = "Mutation\nparalellism"),
+      Gene_paralellism = colDef(width = 100,
+                                align = "center",
+                                name = "Gene\nparalellism")
+      )
+    ) %>% google_font(font_family = "Roboto")
+   
+Final_table_R <- Final_table_R %>% 
+  add_title("Cleaned list of mutations in Resident populations",align = "center",font_size = "16pt") %>% 
+  google_font(font_family = "Roboto")
+
+Final_table_R %>% save_reactable("results/4_Final_table_Resident_populations.html")
+}
+
+#Now we run the same but for the Invader populations
+
+if(length(list_of_populations_I) > 0){
+counts_total_I <- data.frame() #create a empty dataframe to put all data in the end of the loop
+
+
+#create a loop that will count the different nucleotides detected in each position of the Populations_filtered
+
+for (position in as.numeric(Clean_table_blast_I$position)) {
+  #counts nucleotides based on the position ("q" accounts for the minimum quality of each nucleotide
+  counts <- bam2R(file = list.files(path = "Ancestral_files/",
+                                    pattern = "*\\_pop_I.bam$",
+                                    full.names = T),
+                  chr = "NC_000913", 
+                  start = position, 
+                  q = 0, stop = position, 
+                  verbose = F)
+
+  counts <- cbind(position,counts) #Adds the position to first column
+  
+  counts <- as.data.frame(counts) %>% mutate(.keep = "none",
+                                             position = position,
+                                             Total_A = sum(A+a),
+                                             Total_T = sum(T+t),
+                                             Total_C = sum(C+c),
+                                             Total_G = sum(G+g), 
+                                             Total_INS = sum(INS+ins),
+                                             Total_DEL = sum(counts[[6]]+counts[[17]]),
+                                             Total_Reads = sum(Total_A,
+                                                               Total_T,
+                                                               Total_C,
+                                                               Total_G,
+                                                               Total_INS,
+                                                               Total_DEL))
+  
+  counts_total_I <- rbind(counts_total_I,counts) #%>% #joins data from each position
+    #distinct() #removes repeated positions
+
+}
+
+
+mutations_observed_I <- ifelse(nchar(Clean_table_blast_I$mutation) == 3, #This is to identify the variant nucleotide in the population
+                             substring(Clean_table_blast_I$mutation,3,3),
+                             Clean_table_blast_I$mutation)
+mutations_observed_I <- ifelse(str_detect(mutations_observed_I, "\\Δ"),"DEL",mutations_observed_I) #This is to identify the deletions
+mutations_observed_I <- ifelse(str_detect(mutations_observed_I, "\\++"),"INS",mutations_observed_I) #This is to identify the insertions
+
+counts_total_I <- counts_total_I %>% mutate(frequency_A = Total_A/Total_Reads, #calculates the frequency of these variants in Ancestral
+                        frequency_T = Total_T/Total_Reads, #calculates the frequency of these variants in Ancestral
+                        frequency_C = Total_C/Total_Reads, #calculates the frequency of these variants in Ancestral
+                        frequency_G = Total_G/Total_Reads, #calculates the frequency of these variants in Ancestral
+                        frequency_INS = Total_INS/Total_Reads, #calculates the frequency of these variants in Ancestral
+                        frequency_DEL = Total_DEL/Total_Reads) #calculates the frequency of these variants in Ancestral
+
+counts_total_I<-cbind(counts_total_I,mutations_observed_I) #Joins the observed variants in the population with the counts table
+
+
+counts_total_I$A<- ifelse(counts_total_I$Total_A > 3,
+                        ifelse(counts_total_I$frequency_A > 0.015,
+                               TRUE,
+                               FALSE),
+                        FALSE) #Calculates if this variant passes the treshold
+counts_total_I$T<- ifelse(counts_total_I$Total_T > 3,
+                        ifelse(counts_total_I$frequency_T > 0.015,
+                               TRUE,
+                               FALSE),
+                        FALSE) #Calculates if this variant passes the treshold
+counts_total_I$C<- ifelse(counts_total_I$Total_C > 3,
+                        ifelse(counts_total_I$frequency_C > 0.015,
+                               TRUE,
+                               FALSE),
+                        FALSE) #Calculates if this variant passes the treshold
+counts_total_I$G<- ifelse(counts_total_I$Total_G > 3,
+                        ifelse(counts_total_I$frequency_G > 0.015,
+                               TRUE,
+                               FALSE),
+                        FALSE) #Calculates if this variant passes the treshold
+counts_total_I$INS<- ifelse(counts_total_I$Total_INS > 3,
+                          ifelse(counts_total_I$frequency_INS > 0.015,
+                                 TRUE,
+                                 FALSE),
+                          FALSE) #Calculates if this variant passes the treshold
+counts_total_I$DEL<- ifelse(counts_total_I$Total_DEL > 3,
+                          ifelse(counts_total_I$frequency_DEL > 0.015,
+                                 TRUE,
+                                 FALSE),
+                          FALSE) #Calculates if this variant passes the treshold
+
+
+counts_total_I$pass_treshold <- counts_total_I[-ncol(counts_total_I)][cbind(seq_len(nrow(counts_total_I)), #Adds a new column showing if the variant in the sequenced population passes the threshold
+  match(counts_total_I$mutations_observed_I,
+        sub("", 
+            "", 
+            names(counts_total_I)[-ncol(counts_total_I)])))]
+
+counts_total_I$pass_treshold <- as.logical(counts_total_I$pass_treshold) #Makes the pass_treshold column as logical
+counts_total_I <- counts_total_I %>% mutate(pass_treshold = coalesce(pass_treshold,DEL)) #Corrects the NA values for deletions
+
+mutations_to_remove_I <- ifelse(counts_total_I$pass_treshold == TRUE, counts_total_I$position, NA) #Creates a list with the mutations that pass the treshold and have to be removed
+mutations_to_remove_I <- na.exclude(mutations_to_remove_I) #Removes NA from the list
+
+Final_table_I <- Clean_table_blast_I[!Clean_table_blast_I$position %in% mutations_to_remove_I,] #Cleans the mutation table
+Removed_mutations_I <- Clean_table_blast_I[
+  Clean_table_blast_I$position %in% mutations_to_remove_I,] #Creates tables with removed mutations
+
+Paralellism_mut_I <- Final_table_I %>%
+  group_by(mouse,day,mutation,annotation,gene,description) %>%
+  dplyr::select(mouse,day,mutation,annotation,gene,description) %>%
+  distinct() %>%
+  group_by(day,mutation,annotation,gene) %>%
+  mutate("Mutation_paralellism" = n())
+
+Paralellism_gene_I <- Final_table_I %>%
+  group_by(mouse,day,gene) %>%
+  dplyr::select(mouse,day,gene) %>%
+  distinct() %>%
+  group_by(day,gene) %>%
+  mutate("Gene_paralellism" = n())
+
+Final_table_I <- Final_table_I %>% 
+  merge(Paralellism_mut_I) %>% 
+  merge(Paralellism_gene_I)
+
+Final_table_I <- Final_table_I %>%
+  group_by(mouse, day,position) %>%
+  arrange(position, .by_group = T)
+
+Final_table_I <- Final_table_I %>% 
+  dplyr::select(all_of(order),'Mutation_paralellism','Gene_paralellism') 
+
+Final_table_I$day <- as.numeric(Final_table_I$day)
+Final_table_I$position <- as.numeric(Final_table_I$position)
+Final_table_I <- Final_table_I %>% group_by(mouse) %>% arrange(mouse,day,position)
+  
+Final_table_I_react <- as.data.frame(Final_table_I) %>% 
+  reactable(
+    highlight = T,
+    filterable = T,
+    theme = reactableTheme(searchInputStyle = list(width = "100%")),
+    groupBy = c('mouse','day'),
+    style = list(#fontFamily = "sans-serif", 
+                 fontSize = "11pt"),
+    rowStyle = function(index) {
+      if (Final_table_I[index,
+                      "Gene_paralellism"] >= 2) list(fontWeight = "bold")
+    },
+    searchable = T,
+    defaultExpanded = F,
+    columns = list(
+      mouse = colDef(width = 150,
+                     sticky = "left",align = "left", 
+                     name = "Mouse"),
+      day = colDef(width = 100,aggregate = "unique",
+                   align = "left",
+                   sticky = "left", 
+                   name = "Day"),
+      position = colDef(width = 100,
+                        align = "left", 
+                        name = "Position"),
+      mutation = colDef(width = 120,
+                        align = "left", 
+                        name = "Mutation"),
+      freq = colDef(
+        width = 100,
+        align = "left", 
+        name = "Frequency",
+        cell = color_tiles(.,
+                           even_breaks = F,
+                           number_fmt = scales::label_number(accuracy = .001),
+                           colors = viridis(n = length(Final_table_I$freq)),
+                           box_shadow = T)),
+      annotation = colDef(width = 200,
+                          align = "left", 
+                          name = "Annotation"),
+      gene = colDef(width = 250,
+                    align = "left", 
+                    name = "Gene"),
+      description = colDef(width = 230,
+                           align = "left", 
+                           name = "Description"),
+      Mutation_paralellism = colDef(width = 100,
+                                    align = "center",
+                                    name = "Mutation\nparalellism"),
+      Gene_paralellism = colDef(width = 100,
+                                align = "center",
+                                name = "Gene\nparalellism")
+      )
+    ) %>% google_font(font_family = "Roboto")
+   
+Final_table_I_react <- Final_table_I_react %>% 
+  add_title("Final list of mutations in Invader populations",align = "center",font_size = "16pt") %>% 
+  google_font(font_family = "Roboto")
+
+
+Final_table_I_react %>% save_reactable("results/4_Final_table_Invader_populations.html")
+
+}
+
+if(length(list_of_populations_R) > 0) {Final_table_R}
+if(length(list_of_populations_I) > 0) {Final_table_I_react}
+
+
+```
+
+### You can export the tables above to excel files.
+
+```{r Exporting cleaned table of mutations}
+if(length(list_of_populations_R) > 0){
+  
+  write_xlsx(as.data.frame(Clean_table_R), 
+             "results/4_Final_table_Resident_populations.xlsx")
+  write_xlsx(as.data.frame(Removed_mutations_R), 
+             "results/4_Removed_mutations_Resident_populations_IGV.xlsx")
+
+  }
+if(length(list_of_populations_I) > 0){
+
+  write_xlsx(as.data.frame(Final_table_I), 
+             "results/4_Final_table_Invader_populations.xlsx")
+  write_xlsx(as.data.frame(Removed_mutations_I), 
+             "results/4_Removed_mutations_Invader_populations_IGV.xlsx")
+  
+
+  }
+```
+
+## IMPORTANT: The final output of mutations obtained here still needs to be checked in breseq output of the sequenced population, as this script does not remove mutations that have misaligned reads (see below example 1 for the mutation in PROKKA_04530 → in position 4702633 in mouse OB9 day 273) and more than one variant per read (see below example 2 for the mutation in rnfC_2 ← in position 2540950 mouse OB3 day 273)
+
+#### Example 1 (PROKKA_04530 → in position 4702633 in mouse OB9 day 273), in red are highlithed the reads that show a misalignment (small letters and white background).
+
+![](Examples/Example_1.jpeg)
+
+#### Example 2 (rnfC_2 ← in position 2540950 mouse OB3d273), in red are highlighted the reads that show the multiple variants in the same read.
+
+![](Examples/Example_2.jpeg)
+
+#### Session info
+```{r}
+sessionInfo()
+```
+
