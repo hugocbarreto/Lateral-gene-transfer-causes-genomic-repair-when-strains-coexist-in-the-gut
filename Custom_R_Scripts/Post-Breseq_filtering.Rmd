@@ -1388,13 +1388,13 @@ if(length(list_of_populations_I) > 0){
   }
 ```
 
-## IMPORTANT: The final output of mutations obtained here still needs to be checked in breseq output of the sequenced population, as this script does not remove mutations that have misaligned reads (see below example 1 for the mutation in PROKKA_04530 → in position 4702633 in mouse OB9 day 273) and more than one variant per read (see below example 2 for the mutation in rnfC_2 ← in position 2540950 mouse OB3 day 273)
+## IMPORTANT: The final output of mutations obtained here still needs to be checked in breseq output of the sequenced population, as this script does not remove mutations that have misaligned reads (see below example 1 for the mutation in PROKKA_04530 → in position 4702633) and more than one variant per read (see below example 2 for the mutation in rnfC_2 ← in position 2540950)
 
-#### Example 1 (PROKKA_04530 → in position 4702633 in mouse OB9 day 273), in red are highlithed the reads that show a misalignment (small letters and white background).
+#### Example 1 (PROKKA_04530 → in position 4702633), in red are highlithed the reads that show a misalignment (small letters and white background).
 
 ![](Examples/Example_1.jpeg)
 
-#### Example 2 (rnfC_2 ← in position 2540950 mouse OB3d273), in red are highlighted the reads that show the multiple variants in the same read.
+#### Example 2 (rnfC_2 ← in position 2540950), in red are highlighted the reads that show the multiple variants in the same read.
 
 ![](Examples/Example_2.jpeg)
 
